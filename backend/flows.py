@@ -9,6 +9,7 @@
 流编译为邻接表 + 节点闭包后执行；执行采用深度优先遍历，收集所有可达 action，
 最终动作取最高优先级（reject > review > alert > pass），风险分取最大。
 """
+import json
 import os
 import threading
 import time
@@ -167,12 +168,19 @@ class FlowStore:
         if not flow_json.get("id"):
             flow_json["id"] = f"flow_{int(time.time() * 1000)}"
         flow_json.setdefault("name", flow_json["id"])
-        flow_json.setdefault("version", 1)
         flow_json.setdefault("enabled", True)
         flow_json["updated_at"] = int(time.time())
         CompiledFlow(flow_json)
         with self._lock:
+            existing = self._cache.get(flow_json["id"])
+            if existing is not None:
+                # 更新：版本号随保存次数递增
+                flow_json["version"] = int(existing.get("version", 0)) + 1
+            else:
+                flow_json.setdefault("version", 1)
             self._cache[flow_json["id"]] = flow_json
+            # 保存后立即使旧编译产物失效，保证条件判定按最新定义执行
+            self._compiled.pop(flow_json["id"], None)
             self._persist(flow_json["id"])
         return flow_json
 
@@ -181,36 +189,35 @@ class FlowStore:
             if flow_id not in self._cache:
                 return False
             del self._cache[flow_id]
+            self._compiled.pop(flow_id, None)
             self._persist(flow_id)
         return True
 
     def _flow_sig(self, flow_json):
-        nodes = flow_json.get("nodes", [])
-        parts = []
-        for n in nodes:
-            parts.append(n.get("id"))
-            parts.append(n.get("type"))
-            data = n.get("data", {})
-            parts.append(data.get("field"))
-            parts.append(data.get("op"))
-        return "|".join(str(p) for p in parts)
+        # 签名覆盖全部节点数据（含条件阈值 value）与边，任何判定逻辑变化都会改变签名
+        payload = {
+            "nodes": flow_json.get("nodes", []),
+            "edges": flow_json.get("edges", []),
+        }
+        return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
 
     def compile(self, flow_id):
-        existing = self._compiled.get(flow_id)
-        if existing is not None:
+        with self._lock:
+            existing = self._compiled.get(flow_id)
+            if existing is not None:
+                flow = self.get_flow(flow_id)
+                if flow is not None and self._flow_sig(flow) == existing.sig:
+                    return existing
             flow = self.get_flow(flow_id)
-            if flow is not None and self._flow_sig(flow) == existing.sig:
-                return existing
-        flow = self.get_flow(flow_id)
-        if flow is None:
-            return None
-        try:
-            compiled = CompiledFlow(flow)
-        except FlowValidationError:
-            return None
-        compiled.sig = self._flow_sig(flow)
-        self._compiled[flow_id] = compiled
-        return compiled
+            if flow is None:
+                return None
+            try:
+                compiled = CompiledFlow(flow)
+            except FlowValidationError:
+                return None
+            compiled.sig = self._flow_sig(flow)
+            self._compiled[flow_id] = compiled
+            return compiled
 
     def execute(self, flow_id, event):
         compiled = self.compile(flow_id)

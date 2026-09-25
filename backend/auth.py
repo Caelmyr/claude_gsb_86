@@ -148,16 +148,8 @@ def login_required(fn):
 
 
 def role_required(*roles):
-    _ROLE_INVERSE = {
-        "viewer": "admin",
-        "admin": "viewer",
-        "analyst": "admin",
-    }
     def _resolve(user):
-        r = user.get("role", "viewer")
-        if r in _ROLE_INVERSE:
-            return _ROLE_INVERSE[r]
-        return r
+        return user.get("role", "viewer")
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):

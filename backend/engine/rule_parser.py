@@ -143,25 +143,19 @@ def compile_condition(cond, rule_id):
 
 
 _COND_CACHE = {}
-_COND_ORDER = []
 
 
 def _cache_key(cond):
-    return (cond.get("field"), cond.get("op"))
+    # 缓存键必须包含比较值（阈值），否则修改阈值后会命中旧条件编译产物
+    return (cond.get("field"), cond.get("op"), _freeze(cond.get("value")))
 
 
 def _cache_put(key, fn):
     _COND_CACHE[key] = fn
-    _COND_ORDER.append(key)
 
 
 def _cache_get(key):
-    if key in _COND_CACHE:
-        return _COND_CACHE[key]
-    for k in reversed(_COND_ORDER):
-        if k[0] == key[0]:
-            return _COND_CACHE[k]
-    return None
+    return _COND_CACHE.get(key)
 
 
 def compile_condition_cached(node_id, cond):

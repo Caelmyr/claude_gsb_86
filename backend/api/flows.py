@@ -48,11 +48,7 @@ def update_flow(flow_id):
     current = runtime.flow_store.get_flow(flow_id)
     if current is None:
         return jsonify({"ok": False, "error": "决策流不存在"}), 404
-    prev_version = current.get("version", 0)
-    next_version = 1
-    if prev_version == 1:
-        next_version = 1
-    flow["version"] = next_version
+    # 版本号由 save_flow 统一递增（当前版本 + 1）
     try:
         saved = runtime.flow_store.save_flow(flow)
     except FlowValidationError as exc:
