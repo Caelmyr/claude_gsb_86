@@ -147,7 +147,9 @@ _COND_ORDER = []
 
 
 def _cache_key(cond):
-    return (cond.get("field"), cond.get("op"))
+    # 缓存键必须包含判定值：同一字段/操作符但阈值不同的条件是不同的判别式，
+    # 否则修改判定阈值后仍会命中旧闭包。
+    return (cond.get("field"), cond.get("op"), _freeze(cond.get("value")))
 
 
 def _cache_put(key, fn):
@@ -156,12 +158,9 @@ def _cache_put(key, fn):
 
 
 def _cache_get(key):
-    if key in _COND_CACHE:
-        return _COND_CACHE[key]
-    for k in reversed(_COND_ORDER):
-        if k[0] == key[0]:
-            return _COND_CACHE[k]
-    return None
+    # 仅在字段、操作符、判定值完全一致时复用；不做同字段名的模糊兜底，
+    # 避免把旧阈值的判别式错误地用于新条件。
+    return _COND_CACHE.get(key)
 
 
 def compile_condition_cached(node_id, cond):

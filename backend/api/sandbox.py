@@ -69,9 +69,9 @@ def test_flow():
     flow_id = data.get("flow_id")
     if not flow_id:
         return jsonify({"ok": False, "error": "缺少 flow 或 flow_id"}), 400
-    compiled = runtime.flow_store._compiled.get(flow_id)
-    if compiled is None:
-        compiled = runtime.flow_store.compile(flow_id)
+    # 走公共编译入口：内部会按内容签名判断是否需要重新编译，
+    # 保证沙箱测试的始终是最新保存的逻辑
+    compiled = runtime.flow_store.compile(flow_id)
     result = compiled.execute(event) if compiled else None
     if result is None:
         return jsonify({"ok": False, "error": "决策流不存在或编译失败"}), 404

@@ -9,6 +9,7 @@
 流编译为邻接表 + 节点闭包后执行；执行采用深度优先遍历，收集所有可达 action，
 最终动作取最高优先级（reject > review > alert > pass），风险分取最大。
 """
+import json
 import os
 import threading
 import time
@@ -167,13 +168,26 @@ class FlowStore:
         if not flow_json.get("id"):
             flow_json["id"] = f"flow_{int(time.time() * 1000)}"
         flow_json.setdefault("name", flow_json["id"])
-        flow_json.setdefault("version", 1)
         flow_json.setdefault("enabled", True)
-        flow_json["updated_at"] = int(time.time())
+        # 先校验结构，校验失败不改动任何现有状态
         CompiledFlow(flow_json)
         with self._lock:
+            existing = self._cache.get(flow_json["id"])
+            if existing is None:
+                # 新建：默认版本 1（显式传入的版本予以保留）
+                flow_json.setdefault("version", 1)
+            else:
+                # 更新：版本在既有基础上递增，忽略客户端携带的旧版本号，
+                # 避免每次保存都被重置为 1
+                try:
+                    flow_json["version"] = int(existing.get("version", 0)) + 1
+                except (TypeError, ValueError):
+                    flow_json["version"] = 1
+            flow_json["updated_at"] = int(time.time())
             self._cache[flow_json["id"]] = flow_json
             self._persist(flow_json["id"])
+            # 使旧的编译产物失效，保证保存后的条件/动作立即生效
+            self._compiled.pop(flow_json["id"], None)
         return flow_json
 
     def delete_flow(self, flow_id):
@@ -182,17 +196,23 @@ class FlowStore:
                 return False
             del self._cache[flow_id]
             self._persist(flow_id)
+            self._compiled.pop(flow_id, None)
         return True
 
     def _flow_sig(self, flow_json):
+        # 签名必须覆盖条件判定值与动作内容：仅 field/op 相同而阈值/动作变化时，
+        # 必须重新编译，否则会复用持有旧闭包的 CompiledFlow。
         nodes = flow_json.get("nodes", [])
         parts = []
         for n in nodes:
             parts.append(n.get("id"))
             parts.append(n.get("type"))
-            data = n.get("data", {})
-            parts.append(data.get("field"))
-            parts.append(data.get("op"))
+            parts.append(json.dumps(n.get("data", {}), sort_keys=True,
+                                    ensure_ascii=False, default=str))
+        for e in flow_json.get("edges", []):
+            parts.append(e.get("from"))
+            parts.append(e.get("to"))
+            parts.append(e.get("label", ""))
         return "|".join(str(p) for p in parts)
 
     def compile(self, flow_id):
